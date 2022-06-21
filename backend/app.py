@@ -11,8 +11,10 @@ app.config.from_envvar('APP_SETTINGS')
 def login():
     c = Client()
     url = c.authorization_url(client_id=app.config['STRAVA_CLIENT_ID'],
-                              redirect_uri=url_for('.logged_in', _external=True),
-                              approval_prompt='auto')
+                              redirect_uri=url_for('.logged_in',
+                              _external=True),
+                              approval_prompt='auto',
+                              scope=['read_all','activity:read_all','activity:write'])
     return render_template('login.html', authorize_url=url)
 
 
