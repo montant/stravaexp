@@ -1,0 +1,4 @@
+backend/.dccache
+backend/venv
+backend/settings.cfg
+backend/__pycache__/app.cpython-38.pyc
