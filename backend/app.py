@@ -3,6 +3,12 @@ import logging
 
 from flask import Flask, render_template, redirect, url_for, request, jsonify
 from stravalib import Client
+import logging
+import processactivities
+
+logging.basicConfig(level=logging.INFO)
+stravalib_logger = logging.getLogger("stravalib.model.activity")
+stravalib_logger.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 app.config.from_envvar('APP_SETTINGS')
@@ -38,9 +44,10 @@ def logged_in():
                                                       code=code)
         # Probably here you'd want to store this somewhere -- e.g. in a database.
         strava_athlete = client.get_athlete()
+        processactivities.process_activities(client)
 
         return render_template('login_results.html', athlete=strava_athlete, access_token=access_token)
 
-
+    
 if __name__ == '__main__':
     app.run(debug=True)
