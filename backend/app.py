@@ -44,9 +44,13 @@ def logged_in():
                                                       code=code)
         # Probably here you'd want to store this somewhere -- e.g. in a database.
         strava_athlete = client.get_athlete()
-        processactivities.process_activities(client)
+        processed = processactivities.process_activities(client)
 
-        return render_template('login_results.html', athlete=strava_athlete, access_token=access_token)
+        return render_template(
+            'login_results.html',
+            athlete=strava_athlete,
+            access_token=access_token,
+            processed=processed)
 
     
 if __name__ == '__main__':
