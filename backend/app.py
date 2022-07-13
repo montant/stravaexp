@@ -5,6 +5,9 @@ from flask import Flask, render_template, redirect, url_for, request, jsonify
 from stravalib import Client
 import logging
 import processactivities
+import json
+import os
+import time
 
 logging.basicConfig(level=logging.INFO)
 stravalib_logger = logging.getLogger("stravalib.model.activity")
@@ -39,9 +42,35 @@ def logged_in():
     else:
         code = request.args.get('code')
         client = Client()
-        access_token = client.exchange_code_for_token(client_id=app.config['STRAVA_CLIENT_ID'],
+        
+        if os.path.exists("stravaexp.dat"):
+            with open("stravaexp.dat", mode="r") as data_file:
+                access_token = json.load(data_file)
+        else:
+            access_token = client.exchange_code_for_token(client_id=app.config['STRAVA_CLIENT_ID'],
                                                       client_secret=app.config['STRAVA_CLIENT_SECRET'],
                                                       code=code)
+        
+        if time.time() > access_token['expires_at']:
+            print('Token has expired, will refresh')
+            refresh_response = client.refresh_access_token(
+                client_id=app.config['STRAVA_CLIENT_ID'], 
+                client_secret=app.config['STRAVA_CLIENT_SECRET'], 
+                refresh_token=access_token['refresh_token'])
+            access_token = refresh_response
+            with open('stravaexp.dat', 'w') as f:
+                json.dump(refresh_response, f)
+            print('Refreshed token saved to file')
+            client.access_token = refresh_response['access_token']
+            client.refresh_token = refresh_response['refresh_token']
+            client.token_expires_at = refresh_response['expires_at']
+        else:
+            print('Token still valid, expires at {}'
+                .format(time.strftime("%a, %d %b %Y %H:%M:%S %Z", time.localtime(access_token['expires_at']))))
+            client.access_token = access_token['access_token']
+            client.refresh_token = access_token['refresh_token']
+            client.token_expires_at = access_token['expires_at']
+                
         # Probably here you'd want to store this somewhere -- e.g. in a database.
         strava_athlete = client.get_athlete()
         processed = processactivities.process_activities(client)
