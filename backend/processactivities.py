@@ -32,7 +32,7 @@ def process_activities(client):
                 print("     One short ride set to commute")
                 client.update_activity(activity_id=activity.id, commute=True)
             if activity.name != "Vélotaf":
-                client.update_activity(name="Vélotaf")
+                client.update_activity(activity_id=activity.id, name="Vélotaf")
             print("     One short ride set to private EBike")
             nb_rides_edited += 1
             activity = client.update_activity(activity_id=activity.id, activity_type="EBikeRide", private=True)
