@@ -4,3 +4,4 @@ backend/settings.cfg
 backend/__pycache__
 .dccache
 backend/activities.json
+backend/stravaexp.dat
