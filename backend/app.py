@@ -50,6 +50,8 @@ def logged_in():
             access_token = client.exchange_code_for_token(client_id=app.config['STRAVA_CLIENT_ID'],
                                                       client_secret=app.config['STRAVA_CLIENT_SECRET'],
                                                       code=code)
+            with open('stravaexp.dat', 'w') as f:
+                json.dump(access_token, f)
         
         if time.time() > access_token['expires_at']:
             print('Token has expired, will refresh')
