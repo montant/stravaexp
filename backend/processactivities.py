@@ -32,10 +32,16 @@ def process_activities(client):
                 print("     One short ride set to commute")
                 client.update_activity(activity_id=activity.id, commute=True)
             if activity.name != "Vélotaf":
+                print("    One short ride set to Vélotaf")
                 client.update_activity(activity_id=activity.id, name="Vélotaf")
-            print("     One short ride set to private EBike")
+            bike_name = client.get_gear(activity.gear_id).name
+            is_ebike =  bike_name == 'Moustache'
+            if is_ebike:
+                print("     One short ride set to private EBike")
+                activity = client.update_activity(activity_id=activity.id, activity_type="EBikeRide", private=True)
+            else:
+                print(f"    commuting activity not set to EBike as bike is: {bike_name}")
             nb_rides_edited += 1
-            activity = client.update_activity(activity_id=activity.id, activity_type="EBikeRide", private=True)
         if activity.type == "Workout":
             if not activity.private:
                 print("     One public workout set to private")
