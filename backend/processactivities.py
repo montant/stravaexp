@@ -2,6 +2,15 @@ from datetime import timedelta
 import json
 import logging
 
+GEAR_ID_2_NAME = {}
+
+def get_gear_name(client, gear_id):
+    gear_name = GEAR_ID_2_NAME.get(gear_id)
+    if not gear_name:
+        gear_name = client.get_gear(gear_id).name
+        GEAR_ID_2_NAME[gear_id] = gear_name
+    return gear_name
+
 def process_activities(client):
 
     already_parsed_activities = dict()
@@ -35,7 +44,7 @@ def process_activities(client):
             if activity.name != "Vélotaf":
                 print("    One short ride set to Vélotaf")
                 client.update_activity(activity_id=activity.id, name="Vélotaf")
-            bike_name = client.get_gear(activity.gear_id).name
+            bike_name = get_gear_name(client, activity.gear_id)
             is_ebike =  bike_name == 'Moustache'
             if is_ebike:
                 print("     One short ride set to private EBike")
