@@ -5,14 +5,15 @@ import logging
 def process_activities(client):
 
     already_parsed_activities = dict()
-    # try:
-        # already_parsed_activities_file = open("activities.json")
-        # already_parsed_activities = json.load(already_parsed_activities_file)
-    # except:
-        # pass
+    try:
+        already_parsed_activities_file = open("activities.json")
+        already_parsed_activities = json.load(already_parsed_activities_file)
+    except:
+        pass
 
+    first_date = "2022-01-01"
     commuting_threshold = timedelta(minutes=45)
-    activities = client.get_activities(after="2022-01-01")
+    activities = client.get_activities(after=first_date)
     nb_rides_edited = 0
     nb_workout_edited = 0
     nb_activity = 0
@@ -71,7 +72,7 @@ def process_activities(client):
     with open("activities.json", "w") as already_parsed_activities_file:
         json.dump(already_parsed_activities, already_parsed_activities_file)    
             
-    print("#rides > 01-01-2021 kms: ", ride_kms)
+    print("#rides > {fd} kms: {rk}".format(fd=first_date, rk=ride_kms))
     print("#rides edited: ", nb_rides_edited)
     print( "#workout edited: ", nb_workout_edited)
     print("#activities: ", nb_activity)
