@@ -1,6 +1,9 @@
 from datetime import timedelta
 import json
 import logging
+from stravalib.util import limiter
+
+
 
 GEAR_ID_2_NAME = {}
 
@@ -14,11 +17,11 @@ def get_gear_name(client, gear_id):
 def process_activities(client):
 
     already_parsed_activities = dict()
-    try:
-        already_parsed_activities_file = open("activities.json")
-        already_parsed_activities = json.load(already_parsed_activities_file)
-    except:
-        pass
+    # try:
+        # already_parsed_activities_file = open("activities.json")
+        # already_parsed_activities = json.load(already_parsed_activities_file)
+    # except:
+        # pass
 
     first_date = "2022-01-01"
     commuting_threshold = timedelta(minutes=45)
@@ -33,11 +36,11 @@ def process_activities(client):
         already_parsed_activities[str(activity.id)] = True
         nb_activity += 1
         try:
-            print (activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
+            print (activity.type.root, activity.name, activity.start_date, activity.elapsed_time, activity.private)
         except:
-            print (activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
+            print (activity.type.root, activity.name, activity.start_date, activity.elapsed_time, activity.private)
             
-        if (activity.type == 'Ride') and activity.elapsed_time < commuting_threshold:
+        if (activity.type.root == 'Ride') and timedelta(seconds=activity.elapsed_time) < commuting_threshold:
             if not activity.commute:
                 print("     One short ride set to commute")
                 client.update_activity(activity_id=activity.id, commute=True)
@@ -48,35 +51,35 @@ def process_activities(client):
             is_ebike =  bike_name == 'Moustache'
             if is_ebike:
                 print("     One short ride set to private EBike")
-                activity = client.update_activity(activity_id=activity.id, activity_type="EBikeRide", private=True)
+                activity = client.update_activity(activity_id=activity.id, sport_type="EBikeRide", private=True)
             else:
                 print(f"    commuting activity not set to EBike as bike is: {bike_name}")
             nb_rides_edited += 1
-        if activity.type == "Workout":
+        if activity.type.root == "Workout":
             if not activity.private:
                 print("     One public workout set to private")
-                client.update_activity(activity_id=activity.id, private=True, name = "Yoga", activity_type = "Yoga")
+                client.update_activity(activity_id=activity.id, private=True, name = "Yoga", sport_type = "Yoga")
                 print("     One workout set to yoga")
                 nb_workout_edited += 1
             else:
-                client.update_activity(activity_id=activity.id, name = "Yoga", activity_type = "Yoga")
+                client.update_activity(activity_id=activity.id, name = "Yoga", sport_type = "Yoga")
                 print("     One workout set to yoga")
                 nb_workout_edited += 1
             
-        if activity.type == "Yoga":
+        if activity.type.root == "Yoga":
             if not activity.private:
                 print("     One public yoga workout set to private")
                 updated_activity = client.update_activity(activity_id=activity.id, private=True, name = "Yoga")
                 nb_workout_edited += 1
-        if activity.type == "EBikeRide":
+        if activity.type.root == "EBikeRide":
             if not activity.private:
                 print("     One public e-bike ride set to private")
                 client.update_activity(activity_id=activity.id, private=True)
                 nb_rides_edited += 1
-        if activity.type == 'Ride':
+        if activity.type.root == 'Ride':
             if activity.start_date_local.year < 2021:
                 continue
-            ride_kms = ride_kms + activity.distance.num
+            ride_kms = ride_kms + int(activity.distance / 1000.0)
 
     with open("activities.json", "w") as already_parsed_activities_file:
         json.dump(already_parsed_activities, already_parsed_activities_file)    
