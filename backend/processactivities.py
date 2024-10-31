@@ -2,6 +2,7 @@ from datetime import timedelta
 import json
 import logging
 from stravalib.util import limiter
+from stravalib import exc
 
 
 
@@ -10,7 +11,10 @@ GEAR_ID_2_NAME = {}
 def get_gear_name(client, gear_id):
     gear_name = GEAR_ID_2_NAME.get(gear_id)
     if not gear_name:
-        gear_name = client.get_gear(gear_id).name
+        try:
+            gear_name = client.get_gear(gear_id).name
+        except exc.Fault:
+            gear_name = None
         GEAR_ID_2_NAME[gear_id] = gear_name
     return gear_name
 
@@ -23,7 +27,7 @@ def process_activities(client):
     # except:
         # pass
 
-    first_date = "2022-01-01"
+    first_date = "2024-06-01"
     commuting_threshold = timedelta(minutes=45)
     activities = client.get_activities(after=first_date)
     nb_rides_edited = 0
@@ -47,6 +51,7 @@ def process_activities(client):
             if activity.name != "Vélotaf":
                 print("    One short ride set to Vélotaf")
                 client.update_activity(activity_id=activity.id, name="Vélotaf")
+            assert activity.gear_id
             bike_name = get_gear_name(client, activity.gear_id)
             is_ebike =  bike_name == 'Moustache'
             if is_ebike:
