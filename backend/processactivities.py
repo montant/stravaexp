@@ -21,11 +21,11 @@ def get_gear_name(client, gear_id):
 def process_activities(client):
 
     already_parsed_activities = dict()
-    # try:
-        # already_parsed_activities_file = open("activities.json")
-        # already_parsed_activities = json.load(already_parsed_activities_file)
-    # except:
-        # pass
+    try:
+        already_parsed_activities_file = open("activities.json")
+        already_parsed_activities = json.load(already_parsed_activities_file)
+    except:
+        pass
 
     first_date = "2024-06-01"
     commuting_threshold = timedelta(minutes=45)
