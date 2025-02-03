@@ -24,7 +24,10 @@ def process_activities(client):
     try:
         already_parsed_activities_file = open("activities.json")
         already_parsed_activities = json.load(already_parsed_activities_file)
-    except:
+        already_parsed_activities_file.close()
+    except FileNotFoundError:
+        pass
+    except json.JSONDecodeError:
         pass
 
     first_date = "2024-06-01"
@@ -40,9 +43,9 @@ def process_activities(client):
         already_parsed_activities[str(activity.id)] = True
         nb_activity += 1
         try:
-            print (activity.type.root, activity.name, activity.start_date, activity.elapsed_time, activity.private)
+            print (activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
         except:
-            print (activity.type.root, activity.name, activity.start_date, activity.elapsed_time, activity.private)
+            print (activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
             
         if (activity.type.root == 'Ride') and timedelta(seconds=activity.elapsed_time) < commuting_threshold:
             if not activity.commute:
@@ -60,7 +63,8 @@ def process_activities(client):
             else:
                 print(f"    commuting activity not set to EBike as bike is: {bike_name}")
             nb_rides_edited += 1
-        if activity.type.root == "Workout":
+            
+        if activity.type == "Workout":
             if not activity.private:
                 print("     One public workout set to private")
                 client.update_activity(activity_id=activity.id, private=True, name = "Yoga", sport_type = "Yoga")
@@ -71,20 +75,27 @@ def process_activities(client):
                 print("     One workout set to yoga")
                 nb_workout_edited += 1
             
-        if activity.type.root == "Yoga":
+        if activity.type == "Yoga":
             if not activity.private:
                 print("     One public yoga workout set to private")
                 updated_activity = client.update_activity(activity_id=activity.id, private=True, name = "Yoga")
                 nb_workout_edited += 1
-        if activity.type.root == "EBikeRide":
+                
+        if activity.type == "EBikeRide":
             if not activity.private:
                 print("     One public e-bike ride set to private")
                 client.update_activity(activity_id=activity.id, private=True)
                 nb_rides_edited += 1
-        if activity.type.root == 'Ride':
+                
+        if activity.type == 'Ride':
             if activity.start_date_local.year < 2021:
                 continue
-            ride_kms = ride_kms + int(activity.distance / 1000.0)
+            this_ride_kms = int(activity.distance / 1000.0)
+            if this_ride_kms > 30:
+                bike_name = get_gear_name(client, activity.gear_id)
+                if bike_name == "Moustache":
+                    logging.error("Moustache e-bike is associated to a ride > 30 kms")
+            ride_kms = ride_kms + this_ride_kms
 
     with open("activities.json", "w") as already_parsed_activities_file:
         json.dump(already_parsed_activities, already_parsed_activities_file)    
