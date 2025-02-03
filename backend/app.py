@@ -18,7 +18,7 @@ app.config.from_envvar('APP_SETTINGS')
 
 @app.route("/")
 def login():
-    client = Client()
+    client = Client(rate_limit_requests=True)
     if os.path.exists("stravaexp.dat"):
         with open("stravaexp.dat", mode="r") as data_file:
             access_token = json.load(data_file)
