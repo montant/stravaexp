@@ -20,7 +20,11 @@
                 "--no-debugger"
             ],
             "jinja": true,
-            "justMyCode": true
+            "justMyCode": true,
+            "serverReadyAction": {
+                "action": "openExternally",
+                "pattern": "Running on (http://\\S+)"
+            }
         }
     ]
 }
