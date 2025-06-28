@@ -1,6 +1,7 @@
 from datetime import timedelta
 import json
 import logging
+import time
 from stravalib.util import limiter
 from stravalib import exc
 
@@ -38,14 +39,16 @@ def process_activities(client):
     nb_activity = 0
     ride_kms = 0
     for activity in activities:
+        
         if str(activity.id) in already_parsed_activities.keys():
             continue
+        time.sleep(1.5)  # Avoid hitting rate limits
         already_parsed_activities[str(activity.id)] = True
         nb_activity += 1
         try:
-            print (activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
+            print(activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
         except:
-            print (activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
+            print(activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
             
         if (activity.type.root == 'Ride') and timedelta(seconds=activity.elapsed_time) < commuting_threshold:
             if not activity.commute:
