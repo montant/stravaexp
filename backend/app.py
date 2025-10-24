@@ -8,6 +8,9 @@ import processactivities
 import json
 import os
 import time
+import webbrowser
+from threading import Timer
+
 
 logging.basicConfig(level=logging.INFO)
 stravalib_logger = logging.getLogger("stravalib.model.activity")
@@ -15,6 +18,10 @@ stravalib_logger.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 app.config.from_envvar('APP_SETTINGS')
+
+def open_browser():
+    webbrowser.open_new("http://127.0.0.1:5000/")
+
 
 @app.route("/")
 def login():
@@ -92,4 +99,5 @@ def logged_in():
 
     
 if __name__ == '__main__':
+    Timer(5, open_browser).start()  # Open the browser after 5 seconds
     app.run(debug=True)
