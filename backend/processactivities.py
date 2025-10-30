@@ -32,14 +32,30 @@ def process_activities(client):
         pass
 
     first_date = "2024-06-01"
+    first_date = "2020-01-01"
     commuting_threshold = timedelta(minutes=45)
     activities = client.get_activities(after=first_date)
     nb_rides_edited = 0
     nb_workout_edited = 0
     nb_activity = 0
     ride_kms = 0
+    
+    max_heartrate = 0
+    activity_with_max_heartrate = None
+    
     for activity in activities:
-        
+        if activity.max_heartrate and activity.max_heartrate > 175:
+            if activity.type in ("EBikeRide", "Yoga", "Workout"):
+                continue
+            if activity.max_heartrate > 200:
+                print("Skipping suspiciously high heartrate of {} in activity {} / {} / {}".format(activity.max_heartrate, activity.type, activity.name, activity.start_date))
+                continue
+            if activity.max_heartrate > max_heartrate:
+                max_heartrate = activity.max_heartrate
+                activity_with_max_heartrate = activity
+                print("New max heartrate {} in activity {} / {} / {}".format(max_heartrate, activity.type, activity.name, activity.start_date))
+            else:
+                print("High heartrate {} in activity {} / {} / {}".format(activity.max_heartrate, activity.type, activity.name, activity.start_date))
         if str(activity.id) in already_parsed_activities.keys():
             continue
         time.sleep(1.5)  # Avoid hitting rate limits
@@ -50,6 +66,7 @@ def process_activities(client):
         except:
             print(activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
             
+
         if (activity.type.root == 'Ride') and timedelta(seconds=activity.elapsed_time) < commuting_threshold:
             if not activity.commute:
                 print("     One short ride set to commute")
@@ -107,6 +124,13 @@ def process_activities(client):
     print("#rides edited: ", nb_rides_edited)
     print( "#workout edited: ", nb_workout_edited)
     print("#activities: ", nb_activity)
+    if activity_with_max_heartrate:
+        print(
+            "activity with max heart rate: ",
+            activity_with_max_heartrate.type,
+            activity_with_max_heartrate.name,
+            activity_with_max_heartrate.start_date)
+        print("Max heart rate: ", max_heartrate)
 
     return {
         "nb_activity": nb_activity,
