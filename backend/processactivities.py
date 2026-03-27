@@ -1,13 +1,58 @@
 from datetime import timedelta
 import json
 import logging
+import os
 import time
 from stravalib.util import limiter
 from stravalib import exc
 
 
 
+ACTIVITIES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "activities.json")
 GEAR_ID_2_NAME = {}
+
+
+def _write_activities_checkpoint(activity_ids):
+    temp_path = ACTIVITIES_FILE + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as temporary:
+        for activity_id in activity_ids:
+            temporary.write(f"{activity_id}\n")
+        temporary.flush()
+        os.fsync(temporary.fileno())
+    os.replace(temp_path, ACTIVITIES_FILE)
+
+
+def _load_activities_checkpoint():
+    if not os.path.exists(ACTIVITIES_FILE):
+        return {}
+
+    try:
+        with open(ACTIVITIES_FILE, "r", encoding="utf-8") as file_handle:
+            content = file_handle.read()
+        if not content.strip():
+            return {}
+
+        if content.lstrip().startswith("{"):
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                activity_ids = list(parsed.keys())
+                _write_activities_checkpoint(activity_ids)
+                return {activity_id: True for activity_id in activity_ids}
+
+        return {line.strip(): True for line in content.splitlines() if line.strip()}
+    except (json.JSONDecodeError, OSError):
+        try:
+            with open(ACTIVITIES_FILE, "r", encoding="utf-8") as file_handle:
+                return {line.strip(): True for line in file_handle if line.strip()}
+        except OSError:
+            return {}
+
+
+def _append_activity_checkpoint(activity_id, file_handle):
+    file_handle.write(f"{activity_id}\n")
+    file_handle.flush()
+    os.fsync(file_handle.fileno())
+
 
 def get_gear_name(client, gear_id):
     gear_name = GEAR_ID_2_NAME.get(gear_id)
@@ -21,15 +66,8 @@ def get_gear_name(client, gear_id):
 
 def process_activities(client):
 
-    already_parsed_activities = dict()
-    try:
-        already_parsed_activities_file = open("activities.json")
-        already_parsed_activities = json.load(already_parsed_activities_file)
-        already_parsed_activities_file.close()
-    except FileNotFoundError:
-        pass
-    except json.JSONDecodeError:
-        pass
+    already_parsed_activities = _load_activities_checkpoint()
+    checkpoint_handle = open(ACTIVITIES_FILE, "a", encoding="utf-8")
 
     first_date = "2024-06-01"
     first_date = "2020-01-01"
@@ -57,9 +95,12 @@ def process_activities(client):
             else:
                 print("High heartrate {} in activity {} / {} / {}".format(activity.max_heartrate, activity.type, activity.name, activity.start_date))
         if str(activity.id) in already_parsed_activities.keys():
+            print("     Skipping already parsed activity {} / {} / {}".format(activity.type, activity.name, activity.start_date))
             continue
         time.sleep(1.5)  # Avoid hitting rate limits
-        already_parsed_activities[str(activity.id)] = True
+        activity_id = str(activity.id)
+        already_parsed_activities[activity_id] = True
+        _append_activity_checkpoint(activity_id, checkpoint_handle)
         nb_activity += 1
         try:
             print(activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
@@ -117,9 +158,7 @@ def process_activities(client):
                     logging.error("Moustache e-bike is associated to a ride > 30 kms")
             ride_kms = ride_kms + this_ride_kms
 
-    with open("activities.json", "w") as already_parsed_activities_file:
-        json.dump(already_parsed_activities, already_parsed_activities_file)    
-            
+    checkpoint_handle.close()
     print("#rides > {fd} kms: {rk}".format(fd=first_date, rk=ride_kms))
     print("#rides edited: ", nb_rides_edited)
     print( "#workout edited: ", nb_workout_edited)
