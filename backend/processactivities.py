@@ -1,5 +1,4 @@
-from datetime import timedelta
-import json
+from datetime import datetime, timedelta
 import logging
 import os
 import time
@@ -8,57 +7,98 @@ from stravalib import exc
 
 
 
-ACTIVITIES_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "activities.json")
+LAST_PARSED_FILE = os.path.join(os.path.dirname(__file__), "last_parsed_date.txt")
 GEAR_ID_2_NAME = {}
 
 
-def _write_activities_checkpoint(activity_ids):
-    temp_path = ACTIVITIES_FILE + ".tmp"
+DEFAULT_FIRST_DATE = "2026-03-01"
+
+
+def _write_last_parsed_date(last_date):
+    temp_path = LAST_PARSED_FILE + ".tmp"
     with open(temp_path, "w", encoding="utf-8") as temporary:
-        for activity_id in activity_ids:
-            temporary.write(f"{activity_id}\n")
+        temporary.write(last_date)
         temporary.flush()
         os.fsync(temporary.fileno())
-    os.replace(temp_path, ACTIVITIES_FILE)
+    os.replace(temp_path, LAST_PARSED_FILE)
 
 
-def _load_activities_checkpoint():
-    if not os.path.exists(ACTIVITIES_FILE):
-        return {}
+def _load_last_parsed_date():
+    if not os.path.exists(LAST_PARSED_FILE):
+        return DEFAULT_FIRST_DATE
 
     try:
-        with open(ACTIVITIES_FILE, "r", encoding="utf-8") as file_handle:
-            content = file_handle.read()
-        if not content.strip():
-            return {}
+        with open(LAST_PARSED_FILE, "r", encoding="utf-8") as file_handle:
+            raw = file_handle.read().strip()
+        if not raw:
+            return DEFAULT_FIRST_DATE
 
-        if content.lstrip().startswith("{"):
-            parsed = json.loads(content)
-            if isinstance(parsed, dict):
-                activity_ids = list(parsed.keys())
-                _write_activities_checkpoint(activity_ids)
-                return {activity_id: True for activity_id in activity_ids}
+        datetime.fromisoformat(raw)
+        return raw
+    except (ValueError, OSError):
+        return DEFAULT_FIRST_DATE
 
-        return {line.strip(): True for line in content.splitlines() if line.strip()}
-    except (json.JSONDecodeError, OSError):
+
+def _sleep_for_rate_limit(response, method, attempt=1):
+    if response is None:
+        wait = min(300, 5 * 2 ** (attempt - 1))
+        logging.warning("Rate limit response missing headers; sleeping %s seconds", wait)
+        time.sleep(wait)
+        return
+
+    headers = getattr(response, "headers", {}) or {}
+    retry_after = headers.get("Retry-After")
+    if retry_after:
         try:
-            with open(ACTIVITIES_FILE, "r", encoding="utf-8") as file_handle:
-                return {line.strip(): True for line in file_handle if line.strip()}
-        except OSError:
-            return {}
+            wait = int(float(retry_after))
+        except (TypeError, ValueError):
+            wait = 60
+        logging.warning("Rate limit Retry-After header; sleeping %s seconds", wait)
+        time.sleep(wait + 1)
+        return
+
+    rates = limiter.get_rates_from_response_headers(headers, method)
+    if rates:
+        if rates.short_usage >= rates.short_limit:
+            wait = limiter.get_seconds_until_next_quarter()
+            logging.warning("Short-term rate limit exceeded; sleeping %s seconds", wait)
+            time.sleep(wait + 1)
+            return
+        if rates.long_usage >= rates.long_limit:
+            wait = limiter.get_seconds_until_next_day()
+            logging.warning("Long-term rate limit exceeded; sleeping %s seconds", wait)
+            time.sleep(wait + 1)
+            return
+
+    wait = min(300, 5 * 2 ** (attempt - 1))
+    logging.warning("Rate limit hit with unknown headers; sleeping %s seconds", wait)
+    time.sleep(wait)
 
 
-def _append_activity_checkpoint(activity_id, file_handle):
-    file_handle.write(f"{activity_id}\n")
-    file_handle.flush()
-    os.fsync(file_handle.fileno())
+def _retry_api_call(func, method, *args, **kwargs):
+    max_attempts = 8
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return func(*args, **kwargs)
+        except (exc.RateLimitExceeded, exc.Fault) as error:
+            response = getattr(error, "response", None)
+            status_code = None
+            if response is not None:
+                status_code = getattr(response, "status_code", None)
+            if isinstance(error, exc.RateLimitExceeded) or status_code in (429, 503):
+                last_error = error
+                _sleep_for_rate_limit(response, method, attempt)
+                continue
+            raise
+    raise last_error
 
 
 def get_gear_name(client, gear_id):
     gear_name = GEAR_ID_2_NAME.get(gear_id)
     if not gear_name:
         try:
-            gear_name = client.get_gear(gear_id).name
+            gear_name = _retry_api_call(client.get_gear, "GET", gear_id).name
         except exc.Fault:
             gear_name = None
         GEAR_ID_2_NAME[gear_id] = gear_name
@@ -66,13 +106,12 @@ def get_gear_name(client, gear_id):
 
 def process_activities(client):
 
-    already_parsed_activities = _load_activities_checkpoint()
-    checkpoint_handle = open(ACTIVITIES_FILE, "a", encoding="utf-8")
-
-    first_date = "2024-06-01"
-    first_date = "2020-01-01"
+    first_date = _load_last_parsed_date()
+    last_parsed_date = first_date
     commuting_threshold = timedelta(minutes=45)
     activities = client.get_activities(after=first_date)
+    activity_iterator = iter(activities)
+    activity_retry_attempt = 0
     nb_rides_edited = 0
     nb_workout_edited = 0
     nb_activity = 0
@@ -81,7 +120,23 @@ def process_activities(client):
     max_heartrate = 0
     activity_with_max_heartrate = None
     
-    for activity in activities:
+    while True:
+        try:
+            activity = next(activity_iterator)
+            activity_retry_attempt = 0
+        except StopIteration:
+            break
+        except (exc.RateLimitExceeded, exc.Fault) as error:
+            response = getattr(error, "response", None)
+            status_code = getattr(response, "status_code", None) if response is not None else None
+            if isinstance(error, exc.RateLimitExceeded) or status_code == 429:
+                activity_retry_attempt += 1
+                if activity_retry_attempt > 8:
+                    raise
+                _sleep_for_rate_limit(response, "GET", activity_retry_attempt)
+                continue
+            raise
+
         if activity.max_heartrate and activity.max_heartrate > 175:
             if activity.type in ("EBikeRide", "Yoga", "Workout"):
                 continue
@@ -94,13 +149,13 @@ def process_activities(client):
                 print("New max heartrate {} in activity {} / {} / {}".format(max_heartrate, activity.type, activity.name, activity.start_date))
             else:
                 print("High heartrate {} in activity {} / {} / {}".format(activity.max_heartrate, activity.type, activity.name, activity.start_date))
-        if str(activity.id) in already_parsed_activities.keys():
-            print("     Skipping already parsed activity {} / {} / {}".format(activity.type, activity.name, activity.start_date))
-            continue
         time.sleep(1.5)  # Avoid hitting rate limits
-        activity_id = str(activity.id)
-        already_parsed_activities[activity_id] = True
-        _append_activity_checkpoint(activity_id, checkpoint_handle)
+        activity_date = activity.start_date.isoformat()
+        if activity_date <= last_parsed_date:
+            print("     Skipping already covered activity {} / {} / {}".format(activity.type, activity.name, activity.start_date))
+            continue
+        last_parsed_date = max(last_parsed_date, activity_date)
+        _write_last_parsed_date(last_parsed_date)
         nb_activity += 1
         try:
             print(activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
@@ -111,41 +166,40 @@ def process_activities(client):
         if (activity.type.root == 'Ride') and timedelta(seconds=activity.elapsed_time) < commuting_threshold:
             if not activity.commute:
                 print("     One short ride set to commute")
-                client.update_activity(activity_id=activity.id, commute=True)
+                _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, commute=True)
             if activity.name != "Vélotaf":
                 print("    One short ride set to Vélotaf")
-                client.update_activity(activity_id=activity.id, name="Vélotaf")
+                _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, name="Vélotaf")
             assert activity.gear_id
             bike_name = get_gear_name(client, activity.gear_id)
             is_ebike =  bike_name == 'Moustache'
             if is_ebike:
-                print("     One short ride set to private EBike")
-                activity = client.update_activity(activity_id=activity.id, sport_type="EBikeRide", private=True)
+                print("     One short ride converted to EBikeRide")
+                activity = _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, sport_type="EBikeRide")
             else:
                 print(f"    commuting activity not set to EBike as bike is: {bike_name}")
             nb_rides_edited += 1
             
         if activity.type == "Workout":
             if not activity.private:
-                print("     One public workout set to private")
-                client.update_activity(activity_id=activity.id, private=True, name = "Yoga", sport_type = "Yoga")
+                print("     One public workout converted to Yoga")
+                _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, name="Yoga", sport_type="Yoga")
                 print("     One workout set to yoga")
                 nb_workout_edited += 1
             else:
-                client.update_activity(activity_id=activity.id, name = "Yoga", sport_type = "Yoga")
+                _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, name="Yoga", sport_type="Yoga")
                 print("     One workout set to yoga")
                 nb_workout_edited += 1
             
         if activity.type == "Yoga":
             if not activity.private:
-                print("     One public yoga workout set to private")
-                updated_activity = client.update_activity(activity_id=activity.id, private=True, name = "Yoga")
+                print("     One public yoga workout updated")
+                updated_activity = _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, name="Yoga")
                 nb_workout_edited += 1
                 
         if activity.type == "EBikeRide":
             if not activity.private:
-                print("     One public e-bike ride set to private")
-                client.update_activity(activity_id=activity.id, private=True)
+                print("     One public e-bike ride left unchanged")
                 nb_rides_edited += 1
                 
         if activity.type == 'Ride':
@@ -158,7 +212,6 @@ def process_activities(client):
                     logging.error("Moustache e-bike is associated to a ride > 30 kms")
             ride_kms = ride_kms + this_ride_kms
 
-    checkpoint_handle.close()
     print("#rides > {fd} kms: {rk}".format(fd=first_date, rk=ride_kms))
     print("#rides edited: ", nb_rides_edited)
     print( "#workout edited: ", nb_workout_edited)

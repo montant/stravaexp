@@ -3,6 +3,7 @@ import logging
 
 from flask import Flask, render_template, redirect, url_for, request, jsonify
 from stravalib import Client
+from stravalib.util import limiter
 import logging
 import processactivities
 import json
@@ -25,7 +26,7 @@ def open_browser():
 
 @app.route("/")
 def login():
-    client = Client(rate_limit_requests=True)
+    client = Client(rate_limit_requests=True, rate_limiter=limiter.DefaultRateLimiter(priority='medium'))
     if os.path.exists("stravaexp.dat"):
         with open("stravaexp.dat", mode="r") as data_file:
             access_token = json.load(data_file)
@@ -80,7 +81,7 @@ def logged_in():
         return render_template('login_error.html', error=error)
     else:
         code = request.args.get('code')
-        client = Client()
+        client = Client(rate_limit_requests=True, rate_limiter=limiter.DefaultRateLimiter(priority='medium'))
         
         access_token = client.exchange_code_for_token(client_id=app.config['STRAVA_CLIENT_ID'],
                                                     client_secret=app.config['STRAVA_CLIENT_SECRET'],
