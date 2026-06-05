@@ -11,7 +11,7 @@ LAST_PARSED_FILE = os.path.join(os.path.dirname(__file__), "last_parsed_date.txt
 GEAR_ID_2_NAME = {}
 
 
-DEFAULT_FIRST_DATE = "2026-03-01"
+DEFAULT_FIRST_DATE = "2025-12-12"
 
 
 def _write_last_parsed_date(last_date):
@@ -163,7 +163,7 @@ def process_activities(client):
             print(activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
             
 
-        if (activity.type.root == 'Ride') and timedelta(seconds=activity.elapsed_time) < commuting_threshold:
+        if (activity.type.root == 'Ride') and timedelta(seconds=activity.moving_time) < commuting_threshold:
             if not activity.commute:
                 print("     One short ride set to commute")
                 _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, commute=True)
