@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta
+import json
 import logging
 import os
 import time
+from urllib.parse import urlsplit
 from stravalib.util import limiter
 from stravalib import exc
 
@@ -94,6 +96,51 @@ def _retry_api_call(func, method, *args, **kwargs):
     raise last_error
 
 
+def _update_activity_with_logging(client, activity_id, **fields):
+    def log_response(response, *args, **kwargs):
+        request = response.request
+        if (
+            request.method != "PUT"
+            or urlsplit(request.url).path
+            != f"/api/v3/activities/{activity_id}"
+        ):
+            return
+        try:
+            sent = json.loads(request.body)
+            received = response.json()
+        except (TypeError, ValueError):
+            logging.warning(
+                "Activity PUT id=%s HTTP=%s: non-JSON request or response",
+                activity_id, response.status_code
+            )
+            return
+        if not isinstance(sent, dict) or not isinstance(received, dict):
+            logging.warning(
+                "Activity PUT id=%s HTTP=%s: unexpected JSON structure",
+                activity_id, response.status_code
+            )
+            return
+        safe_fields = ("name", "commute", "sport_type", "type")
+        sent_fields = {
+            key: sent[key] for key in safe_fields if key in sent
+        }
+        received_fields = {
+            key: received[key]
+            for key in ("id", *safe_fields) if key in received
+        }
+        logging.info(
+            "Activity PUT id=%s sent=%r HTTP=%s returned=%r",
+            activity_id, sent_fields, response.status_code, received_fields
+        )
+
+    response_hooks = client.protocol.rsession.hooks["response"]
+    response_hooks.append(log_response)
+    try:
+        return client.update_activity(activity_id=activity_id, **fields)
+    finally:
+        response_hooks.remove(log_response)
+
+
 def get_gear_name(client, gear_id):
     gear_name = GEAR_ID_2_NAME.get(gear_id)
     if not gear_name:
@@ -162,25 +209,50 @@ def process_activities(client):
         except:
             print(activity.type, activity.name, activity.start_date, activity.elapsed_time, activity.private)
             
-
-        if (activity.type.root == 'Ride') and timedelta(seconds=activity.moving_time) < commuting_threshold:
+        ebike_update_accepted = False
+        is_custom_workout = activity.type == "Workout" and activity.average_speed > 0.0
+        if (activity.type.root == 'Ride' or is_custom_workout) and timedelta(seconds=activity.moving_time) < commuting_threshold:
+            activity_updates = {}
             if not activity.commute:
                 print("     One short ride set to commute")
-                _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, commute=True)
+                activity_updates["commute"] = True
             if activity.name != "Vélotaf":
                 print("    One short ride set to Vélotaf")
-                _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, name="Vélotaf")
-            assert activity.gear_id
-            bike_name = get_gear_name(client, activity.gear_id)
-            is_ebike =  bike_name == 'Moustache'
+                activity_updates["name"] = "Vélotaf"
+            if activity.gear_id:
+                bike_name = get_gear_name(client, activity.gear_id)
+            is_ebike = not activity.gear_id or bike_name == 'Moustache'
             if is_ebike:
-                print("     One short ride converted to EBikeRide")
-                activity = _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, sport_type="EBikeRide")
+                print(f"     Converting activity {activity.id} to EBikeRide")
+                activity_updates["sport_type"] = "EBikeRide"
             else:
                 print(f"    commuting activity not set to EBike as bike is: {bike_name}")
+            if activity_updates:
+                activity = _retry_api_call(
+                    _update_activity_with_logging, "PUT", client,
+                    activity_id=activity.id,
+                    **activity_updates
+                )
+            if is_ebike:
+                # A PUT returned Workout while Strava later showed E-Bike Ride.
+                # The timing/cause is unclear. Track the accepted update
+                # separately so old response fields cannot trigger Yoga.
+                ebike_update_accepted = True
+                if (
+                    activity.sport_type is None
+                    or activity.sport_type.root != "EBikeRide"
+                ):
+                    logging.warning(
+                        "Activity %s: EBikeRide PUT accepted, but response "
+                        "sport_type=%r; persistence not verified by script",
+                        activity.id, activity.sport_type
+                    )
+                print(
+                    f"     Activity {activity.id}: EBikeRide update accepted"
+                )
             nb_rides_edited += 1
             
-        if activity.type == "Workout":
+        if activity.type == "Workout" and not ebike_update_accepted:
             if not activity.private:
                 print("     One public workout converted to Yoga")
                 _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, name="Yoga", sport_type="Yoga")
@@ -197,12 +269,12 @@ def process_activities(client):
                 updated_activity = _retry_api_call(client.update_activity, "PUT", activity_id=activity.id, name="Yoga")
                 nb_workout_edited += 1
                 
-        if activity.type == "EBikeRide":
+        if activity.type == "EBikeRide" and not ebike_update_accepted:
             if not activity.private:
                 print("     One public e-bike ride left unchanged")
                 nb_rides_edited += 1
                 
-        if activity.type == 'Ride':
+        if activity.type == 'Ride' and not ebike_update_accepted:
             if activity.start_date_local.year < 2021:
                 continue
             this_ride_kms = int(activity.distance / 1000.0)
